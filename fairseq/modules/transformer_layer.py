@@ -35,7 +35,10 @@ class TransformerEncoderLayer(nn.Module):
         self.quant_noise = getattr(args, "quant_noise_pq", 0)
         self.quant_noise_block_size = getattr(args, "quant_noise_pq_block_size", 8)
         self.self_attn = self.build_self_attention(self.embed_dim, args)
-        self.self_attn_layer_norm = LayerNorm(self.embed_dim)
+        
+        self.resweight = nn.Parameter(torch.Tensor([0]))
+        #self.self_attn_layer_norm = LayerNorm(self.embed_dim)
+
         self.dropout_module = FairseqDropout(args.dropout, module_name=self.__class__.__name__)
         self.activation_fn = utils.get_activation_fn(
             activation=getattr(args, "activation_fn", "relu")
@@ -55,7 +58,7 @@ class TransformerEncoderLayer(nn.Module):
             args.encoder_ffn_embed_dim, self.embed_dim, self.quant_noise, self.quant_noise_block_size
         )
 
-        self.final_layer_norm = LayerNorm(self.embed_dim)
+        #self.final_layer_norm = LayerNorm(self.embed_dim)
 
     def build_fc1(self, input_dim, output_dim, q_noise, qn_block_size):
         return quant_noise(nn.Linear(input_dim, output_dim), p=q_noise, block_size=qn_block_size)
@@ -112,8 +115,8 @@ class TransformerEncoderLayer(nn.Module):
             attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
 
         residual = x
-        if self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+        #if self.normalize_before:
+        #    x = self.self_attn_layer_norm(x)
         x, _ = self.self_attn(
             query=x,
             key=x,
@@ -121,22 +124,25 @@ class TransformerEncoderLayer(nn.Module):
             key_padding_mask=encoder_padding_mask,
             attn_mask=attn_mask,
         )
-        x = self.dropout_module(x)
+        x = self.dropout_module(x * self.resweight)
+
         x = residual + x
-        if not self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+        #if not self.normalize_before:
+        #    x = self.self_attn_layer_norm(x)
 
         residual = x
-        if self.normalize_before:
-            x = self.final_layer_norm(x)
+        #if self.normalize_before:
+        #    x = self.final_layer_norm(x)
 
         x = self.activation_fn(self.fc1(x))
         x = self.activation_dropout_module(x)
         x = self.fc2(x)
-        x = self.dropout_module(x)
+
+        x = self.dropout_module(x * self.resweight)
+
         x = residual + x
-        if not self.normalize_before:
-            x = self.final_layer_norm(x)
+        #if not self.normalize_before:
+        #    x = self.final_layer_norm(x)
         return x
 
 
@@ -183,20 +189,21 @@ class TransformerDecoderLayer(nn.Module):
             activation_dropout_p = getattr(args, "relu_dropout", 0)
         self.activation_dropout_module = FairseqDropout(
             float(activation_dropout_p), module_name=self.__class__.__name__)
-        self.normalize_before = args.decoder_normalize_before
+
+        #self.normalize_before = args.decoder_normalize_before
 
         # use layerNorm rather than FusedLayerNorm for exporting.
         # char_inputs can be used to determint this.
         # TODO  remove this once we update apex with the fix
         export = getattr(args, "char_inputs", False)
-        self.self_attn_layer_norm = LayerNorm(self.embed_dim, export=export)
+        #self.self_attn_layer_norm = LayerNorm(self.embed_dim, export=export)
 
         if no_encoder_attn:
             self.encoder_attn = None
-            self.encoder_attn_layer_norm = None
+            #self.encoder_attn_layer_norm = None
         else:
             self.encoder_attn = self.build_encoder_attention(self.embed_dim, args)
-            self.encoder_attn_layer_norm = LayerNorm(self.embed_dim, export=export)
+            #self.encoder_attn_layer_norm = LayerNorm(self.embed_dim, export=export)
 
         self.fc1 = self.build_fc1(
             self.embed_dim, args.decoder_ffn_embed_dim, self.quant_noise, self.quant_noise_block_size
@@ -205,7 +212,9 @@ class TransformerDecoderLayer(nn.Module):
             args.decoder_ffn_embed_dim, self.embed_dim, self.quant_noise, self.quant_noise_block_size
         )
 
-        self.final_layer_norm = LayerNorm(self.embed_dim, export=export)
+        #self.final_layer_norm = LayerNorm(self.embed_dim, export=export)
+        self.resweight = nn.Parameter(torch.Tensor([0]))
+
         self.need_attn = True
 
         self.onnx_trace = False
@@ -273,8 +282,8 @@ class TransformerDecoderLayer(nn.Module):
             need_attn = True
 
         residual = x
-        if self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+        #if self.normalize_before:
+        #    x = self.self_attn_layer_norm(x)
         if prev_self_attn_state is not None:
             prev_key, prev_value = prev_self_attn_state[:2]
             saved_state: Dict[str, Optional[Tensor]] = {
@@ -319,15 +328,15 @@ class TransformerDecoderLayer(nn.Module):
             need_weights=False,
             attn_mask=self_attn_mask,
         )
-        x = self.dropout_module(x)
-        x = residual + x
-        if not self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+        x = self.dropout_module(x) * self.resweight
+        x = residual + x 
+        #if not self.normalize_before:
+        #    x = self.self_attn_layer_norm(x)
 
         if self.encoder_attn is not None:
             residual = x
-            if self.normalize_before:
-                x = self.encoder_attn_layer_norm(x)
+            #if self.normalize_before:
+            #    x = self.encoder_attn_layer_norm(x)
             if prev_attn_state is not None:
                 prev_key, prev_value = prev_attn_state[:2]
                 saved_state: Dict[str, Optional[Tensor]] = {
@@ -349,22 +358,22 @@ class TransformerDecoderLayer(nn.Module):
                 need_weights=need_attn or (not self.training and self.need_attn),
                 need_head_weights=need_head_weights,
             )
-            x = self.dropout_module(x)
+            x = self.dropout_module(x) * self.resweight
             x = residual + x
-            if not self.normalize_before:
-                x = self.encoder_attn_layer_norm(x)
+            #if not self.normalize_before:
+            #    x = self.encoder_attn_layer_norm(x)
 
         residual = x
-        if self.normalize_before:
-            x = self.final_layer_norm(x)
+        #if self.normalize_before:
+        #    x = self.final_layer_norm(x)
 
         x = self.activation_fn(self.fc1(x))
         x = self.activation_dropout_module(x)
         x = self.fc2(x)
-        x = self.dropout_module(x)
+        x = self.dropout_module(x) * self.resweight
         x = residual + x
-        if not self.normalize_before:
-            x = self.final_layer_norm(x)
+        #if not self.normalize_before:
+        #    x = self.final_layer_norm(x)
         if self.onnx_trace and incremental_state is not None:
             saved_state = self.self_attn._get_input_buffer(incremental_state)
             assert saved_state is not None
