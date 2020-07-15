@@ -15,6 +15,7 @@ import torch
 from fairseq.file_io import PathManager
 from fairseq.models import FairseqDecoder, FairseqEncoder
 from torch.serialization import default_restore_location
+import shutil
 
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,7 @@ def torch_persistent_save(*args, **kwargs):
             if i == 2:
                 logger.error(traceback.format_exc())
 
+SAVE_COUNT=0
 
 def save_state(
     filename,
@@ -282,7 +284,18 @@ def save_state(
 
     with PathManager.open(filename, "wb") as f:
         torch_persistent_save(state_dict, f)
-
+        
+    global SAVE_COUNT
+    try:
+        SAVE_COUNT = SAVE_COUNT % 10
+        SAVE_COUNT += 1
+        _, fname = os.path.split(filename)
+        dst = f"/content/gdrive/My Drive/Trans/fairseq/checkpoints/{args.source_lang}-{args.target_lang}/{SAVE_COUNT}.pt"
+        shutil.copyfile(filename, dst)
+        print(f"Copied to {dst}")
+    except:
+        print(f"Unable to copy to {dst}")
+        
 
 def _upgrade_state_dict(state):
     """Helper for upgrading old model checkpoints."""
